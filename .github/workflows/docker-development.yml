@@ -1,0 +1,70 @@
+name: Laravel Develop CI
+on:
+  push:
+    branches: [ develop ]
+  pull_request:
+    branches: [ develop ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Set up PHP for Laravel
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, intl, pdo_mysql, zip, exif, pcntl, bcmath
+          tools: composer:v2
+          coverage: none
+
+      # Install PHP dependencies
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      # Copy environment file
+      - name: Prepare Laravel environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      # Setup directory for Apache config
+      - name: Create Apache config directory
+        run: mkdir -p docker/apache
+
+      # Create Apache config file
+      - name: Create Apache config file
+        run: |
+          cat > docker/apache/000-default.conf << 'EOL'
+          <VirtualHost *:80>
+              DocumentRoot /var/www/html/public
+              <Directory "/var/www/html/public">
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+              ErrorLog ${APACHE_LOG_DIR}/error.log
+              CustomLog ${APACHE_LOG_DIR}/access.log combined
+          </VirtualHost>
+          EOL
+
+      # Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Extract lowercase repository name for Docker tag
+      - name: Set lowercase repository name
+        id: repo-name
+        run: echo "REPO_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      # Build Docker image with BuildX (without pushing)
+      - name: Build Docker image with BuildX
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.repo-name.outputs.REPO_NAME }}:develop
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
